@@ -23,7 +23,7 @@ typedef long intptr_t; // Hack for kernel that does not have intptr_t
 #define RLU_TYPE_FINE_GRAINED (1)
 #define RLU_TYPE_COARSE_GRAINED (2)
 
-#define RLU_MAX_THREADS (128)
+#define RLU_MAX_THREADS (200)
 
 #define RLU_MAX_WRITE_SETS (200) // Minimum value is 2
 #define RLU_MAX_FREE_NODES (100000)

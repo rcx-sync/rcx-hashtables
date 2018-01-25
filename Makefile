@@ -1,70 +1,26 @@
-URCUDIR ?= /usr/local
+obj-m += sync.o
+sync-objs := sync_test.o barrier.o rlu.o rlu-hash-list.o rcu-hash-list.o
+sync-objs += rcx-hash-list.o
+sync-objs += rtm_debug.o
 
-CC := gcc
-LD := gcc
+CFLAGS_rlu.o := -DKERNEL
+CFLAGS_rlu-hash-list.o := -DKERNEL
+CFLAGS_sync_test.o := -DKERNEL
+# To enable pr_debug/pr_devel in dmesg
+#CFLAGS_sync_test.o := -DDEBUG
 
-CFLAGS += -I$(URCUDIR)/include
-CFLAGS += -D_REENTRANT
-CFLAGS += -Wall -Winline
-#CFLAGS += --param inline-unit-growth=1000
-CFLAGS += -mrtm
+# V=1 for debug
 
-ifdef DEBUG
-	CFLAGS += -O0 -g3
-else
-	CFLAGS += -DNDEBUG
-	CFLAGS += -O3
-endif
-
-IS_HAZARD_PTRS_HARRIS = -DIS_HAZARD_PTRS_HARRIS
-IS_HARRIS = -DIS_HARRIS
-IS_RCU = -DIS_RCU
-IS_RLU = -DIS_RLU
-
-LDFLAGS += -L$(URCUDIR)/lib
-LDFLAGS += -lpthread
-
-BINS = bench-harris bench-hp-harris bench-rcu bench-rlu
-
-.PHONY:	all clean
-
-all: $(BINS)
-
-rlu.o: rlu.c rlu.h
-	$(CC) $(CFLAGS) $(DEFINES) -c -o $@ $<
-
-new-urcu.o: new-urcu.c
-	$(CC) $(CFLAGS) $(DEFINES) -c -o $@ $<
-
-hazard_ptrs.o: hazard_ptrs.c
-	$(CC) $(CFLAGS) $(DEFINES) -c -o $@ $<
-
-hash-list.o: hash-list.c
-	$(CC) $(CFLAGS) $(DEFINES) -c -o $@ $<
-
-bench-harris.o: bench.c
-	$(CC) $(CFLAGS) $(IS_HARRIS) $(DEFINES) -c -o $@ $<
-
-bench-hp-harris.o: bench.c
-	$(CC) $(CFLAGS) $(IS_HAZARD_PTRS_HARRIS) $(DEFINES) -c -o $@ $<
-
-bench-rcu.o: bench.c
-	$(CC) $(CFLAGS) $(IS_RCU) $(DEFINES) -c -o $@ $<
-
-bench-rlu.o: bench.c
-	$(CC) $(CFLAGS) $(IS_RLU) $(DEFINES) -c -o $@ $<
-
-bench-harris: new-urcu.o hazard_ptrs.o rlu.o hash-list.o bench-harris.o
-	$(LD) -o $@ $^ $(LDFLAGS)
-
-bench-hp-harris: new-urcu.o hazard_ptrs.o rlu.o hash-list.o bench-hp-harris.o
-	$(LD) -o $@ $^ $(LDFLAGS)
-
-bench-rcu: new-urcu.o hazard_ptrs.o rlu.o hash-list.o bench-rcu.o
-	$(LD) -o $@ $^ $(LDFLAGS)
-
-bench-rlu: new-urcu.o hazard_ptrs.o rlu.o hash-list.o bench-rlu.o
-	$(LD) -o $@ $^ $(LDFLAGS)
+all:
+	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) modules
 
 clean:
-	rm -f $(BINS) *.o
+	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) clean
+
+info:
+	modinfo sync.ko
+
+bench:
+	dmesg -c > /dev/null
+	insmod sync.ko benchmark="rculist" threads_nb=1 update=0 range=256 duration=500
+	rmmod sync.ko

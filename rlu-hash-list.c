@@ -84,9 +84,9 @@ hash_list_t *rlu_new_hash_list(int n_buckets)
 	return p_hash_list;
 }
 
-int rlu_hash_list_init(void)
+int rlu_hash_list_init(int nr_buckets, void *dat)
 {
-    g_hash_list = rlu_new_hash_list(DEFAULT_BUCKETS);
+    g_hash_list = rlu_new_hash_list(nr_buckets);
     return 0;
 }
 
@@ -111,6 +111,7 @@ static int list_size(list_t *p_list)
 /////////////////////////////////////////////////////////
 // HASH LIST SIZE
 /////////////////////////////////////////////////////////
+__attribute__ ((unused))
 static int hash_list_size(hash_list_t *p_hash_list)
 {
 	int i;
@@ -201,6 +202,7 @@ restart:
 		if (!RLU_TRY_LOCK(self, &p_prev)) {
 			RLU_ABORT(self);
 			goto restart;
+
 		}
 		
 		if (!RLU_TRY_LOCK(self, &p_next)) {
@@ -217,7 +219,55 @@ restart:
 	
 	RLU_READER_UNLOCK(self);
 	
-	return result;
+	return 0;
+}
+
+int rlu_list_try_add(rlu_thread_data_t *self, list_t *p_list, val_t val) {
+	int result;
+	node_t *p_prev, *p_next;
+	val_t v;
+
+	RLU_READER_LOCK(self);
+
+	p_prev = (node_t *)RLU_DEREF(self, (p_list->p_head));
+	p_next = (node_t *)RLU_DEREF(self, (p_prev->p_next));
+	while (1) {
+		//p_node = (node_t *)RLU_DEREF(self, p_next);
+		v = p_next->val;
+
+		if (v >= val) {
+			break;
+		}
+
+		p_prev = p_next;
+		p_next = (node_t *)RLU_DEREF(self, (p_prev->p_next));
+	}
+
+	result = (v != val);
+
+	if (result) {
+		node_t *p_new_node;
+
+		if (!RLU_TRY_LOCK(self, &p_prev)) {
+			RLU_ABORT(self);
+			return 2;
+		}
+
+		if (!RLU_TRY_LOCK(self, &p_next)) {
+			RLU_ABORT(self);
+			return 2;
+		}
+
+		p_new_node = rlu_new_node();
+		p_new_node->val = val;
+		RLU_ASSIGN_PTR(self, &(p_new_node->p_next), p_next);
+
+		RLU_ASSIGN_PTR(self, &(p_prev->p_next), p_new_node);
+	}
+
+	RLU_READER_UNLOCK(self);
+
+	return 0;
 }
 
 /////////////////////////////////////////////////////////
@@ -228,10 +278,15 @@ int rlu_hash_list_add(void *tl, val_t val)
 	rlu_thread_data_t *self = (rlu_thread_data_t *)tl;
 	int hash = HASH_VALUE(g_hash_list, val);
 	
-	int ret = rlu_list_add(self, g_hash_list->buckets[hash], val);
-    if (ret)
-        return 0;
-    return -EEXIST;
+	return rlu_list_add(self, g_hash_list->buckets[hash], val);
+}
+
+int rlu_hash_list_try_add(void *tl, val_t val)
+{
+	rlu_thread_data_t *self = (rlu_thread_data_t *)tl;
+	int hash = HASH_VALUE(g_hash_list, val);
+
+	return rlu_list_try_add(self, g_hash_list->buckets[hash], val);
 }
 
 
@@ -283,12 +338,64 @@ restart:
 		
 		RLU_READER_UNLOCK(self);
 		
-		return result;
+		return 0;
 	}
 	
 	RLU_READER_UNLOCK(self);
 	
-	return result;
+	return 0;
+}
+
+int rlu_list_try_remove(rlu_thread_data_t *self, list_t *p_list, val_t val) {
+	int result;
+	node_t *p_prev, *p_next;
+	node_t *n;
+	val_t v;
+
+	RLU_READER_LOCK(self);
+
+	p_prev = (node_t *)RLU_DEREF(self, (p_list->p_head));
+	p_next = (node_t *)RLU_DEREF(self, (p_prev->p_next));
+	while (1) {
+		//p_node = (node_t *)RLU_DEREF(self, p_next);
+
+		v = p_next->val;
+
+		if (v >= val) {
+			break;
+		}
+
+		p_prev = p_next;
+		p_next = (node_t *)RLU_DEREF(self, (p_prev->p_next));
+	}
+
+	result = (v == val);
+
+	if (result) {
+		n = (node_t *)RLU_DEREF(self, (p_next->p_next));
+
+		if (!RLU_TRY_LOCK(self, &p_prev)) {
+			RLU_ABORT(self);
+			return 2;
+		}
+
+		if (!RLU_TRY_LOCK(self, &p_next)) {
+			RLU_ABORT(self);
+			return 2;
+		}
+
+		RLU_ASSIGN_PTR(self, &(p_prev->p_next), n);
+
+		RLU_FREE(self, p_next);
+
+		RLU_READER_UNLOCK(self);
+
+		return 0;
+	}
+
+	RLU_READER_UNLOCK(self);
+
+	return 0;
 }
 
 /////////////////////////////////////////////////////////
@@ -299,9 +406,29 @@ int rlu_hash_list_remove(void *tl, val_t val)
 	rlu_thread_data_t *self = (rlu_thread_data_t *)tl;
 	int hash = HASH_VALUE(g_hash_list, val);
 	
-    int ret = rlu_list_remove(self, g_hash_list->buckets[hash], val);
-    if (ret)
-        return 0;
-    return -ENOENT;
+	return rlu_list_remove(self, g_hash_list->buckets[hash], val);
 }
 
+int rlu_hash_list_try_remove(void *tl, val_t val)
+{
+	rlu_thread_data_t *self = (rlu_thread_data_t *)tl;
+	int hash = HASH_VALUE(g_hash_list, val);
+
+	return rlu_list_try_remove(self, g_hash_list->buckets[hash], val);
+}
+
+void rlu_hash_list_destroy(void)
+{
+	int hash;
+	node_t *iter;
+	list_t *list;
+
+	for (hash = 0; hash < g_hash_list->n_buckets; hash++) {
+		list = g_hash_list->buckets[hash];
+		/* Free min, max value sentinels */
+		for (iter = list->p_head; iter != NULL; iter = iter->p_next)
+			RLU_FREE(NULL, iter);
+		kfree(g_hash_list->buckets[hash]);
+	}
+	kfree(g_hash_list);
+}
