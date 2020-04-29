@@ -8,45 +8,7 @@
 #include "rtm_debug.h"
 #include "sync_test.h"
 
-/*
- * Abort rate rapidly grows as STATIC_PARTITION goes away from 71
- *
- * STATIC_PARTITION	Aborts per 1000 updates
- * 69			221
- * 70			171
- * 71			96
- * 72			1
- * 73			34
- * 74			101
- * 75			124
- * 76			169
- *
- * CPU topology of the system is as below:
- * [socket 0]
- * (  0, 72), (  1, 73), (  2, 74), (  3, 75), (  4, 76), (  5, 77), (  6, 78),
- * (  7, 79), (  8, 80), (  9, 81), ( 10, 82), ( 11, 83), ( 12, 84), ( 13, 85),
- * ( 14, 86), ( 15, 87), ( 16, 88), ( 17, 89),
- *
- * [socket 1]
- * ( 18, 90), ( 19, 91), ( 20, 92), ( 21, 93), ( 22, 94), ( 23, 95), ( 24, 96),
- * ( 25, 97), ( 26, 98), ( 27, 99), ( 28,100), ( 29,101), ( 30,102), ( 31,103),
- * ( 32,104), ( 33,105), ( 34,106), ( 35,107),
- *
- * [socket 2]
- * ( 36,108), ( 37,109), ( 38,110), ( 39,111), ( 40,112), ( 41,113), ( 42,114),
- * ( 43,115), ( 44,116), ( 45,117), ( 46,118), ( 47,119), ( 48,120), ( 49,121),
- * ( 50,122), ( 51,123), ( 52,124), ( 53,125),
- *
- * [socket 3]
- * ( 54,126), ( 55,127), ( 56,128), ( 57,129), ( 58,130), ( 59,131), ( 60,132),
- * ( 61,133), ( 62,134), ( 63,135), ( 64,136), ( 65,137), ( 66,138), ( 67,139),
- * ( 68,140), ( 69,141), ( 70,142), ( 71,143),
- */
-#ifndef STATIC_PARTITION
 #define HASH_VALUE(p_hash_list, val)    (val % p_hash_list->n_buckets)
-#else
-#define HASH_VALUE(p_hash_list, val)    (smp_processor_id() % STATIC_PARTITION)
-#endif	/* STATIC_PARTITION */
 
 #define RCU_READER_LOCK()               rcu_read_lock()
 #define RCU_READER_UNLOCK()             rcu_read_unlock()
@@ -1254,15 +1216,6 @@ retry:
 			pnodelock(p_next) = 1;
 			pnodelock(n) = 1;
 
-			/*
-			if (p_prev->removed || p_next->removed || n->removed)
-				_xabort(ABORT_DOUBLE_FREE);
-			if (RCU_DEREF(p_prev->p_next) != p_next ||
-					RCU_DEREF(p_next->p_next) != n)
-				_xabort(ABORT_CONFLICT);
-			RCU_ASSIGN_PTR((p_prev->p_next), n);
-			p_next->removed = 1;
-			*/
 			_xend();
 		} else {
 			RCU_READER_UNLOCK();
