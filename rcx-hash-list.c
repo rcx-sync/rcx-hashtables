@@ -208,6 +208,8 @@ int rcx_list_add(list_t *p_list, val_t val)
 	val_t v;
 	int tx_stat;
 
+	RCU_READER_LOCK();
+
 	p_prev = (node_t *)RCU_DEREF(p_list->p_head);
 	p_next = (node_t *)RCU_DEREF(p_prev->p_next);
 
@@ -240,12 +242,14 @@ int rcx_list_add(list_t *p_list, val_t val)
 			RCU_ASSIGN_PTR((p_prev->p_next), p_new_node);
 			_xend();
 		} else {
+			RCU_READER_UNLOCK();
 			record_abort(tx_stat);
 			kfree(p_new_node);
 			return 2;
 		}
 	}
 
+	RCU_READER_UNLOCK();
 	return result;
 }
 
@@ -267,6 +271,8 @@ int rcx_list_lf_add(list_t *p_list, val_t val)
 	int retries = 0;
 
 retry:
+	RCU_READER_LOCK();
+
 	if (retries++ > LF_RETRY_LIMIT) {
 		retries = 0;
 		RCU_WRITER_LOCK(p_list->rcuspin);
@@ -296,6 +302,7 @@ retry:
 			RCU_ASSIGN_PTR((p_prev->p_next), p_new_node);
 		}
 		RCU_WRITER_UNLOCK(p_list->rcuspin);
+		RCU_READER_UNLOCK();
 
 		return result;
 	}
@@ -338,10 +345,12 @@ retry:
 		} else {
 			record_abort(tx_stat);
 			kfree(p_new_node);
+			RCU_READER_UNLOCK();
 			goto retry;
 		}
 	}
 
+	RCU_READER_UNLOCK();
 	return result;
 }
 
@@ -360,6 +369,8 @@ int rcx_list_fb1_add(list_t *p_list, val_t val)
 	int tx_stat;
 
 htm_path:
+	RCU_READER_LOCK();
+
 	p_prev = (node_t *)RCU_DEREF(p_list->p_head);
 	p_next = (node_t *)RCU_DEREF(p_prev->p_next);
 
@@ -396,6 +407,7 @@ htm_path:
 			RCU_ASSIGN_PTR((p_prev->p_next), p_new_node);
 			_xend();
 		} else {
+			RCU_READER_UNLOCK();
 			record_abort(tx_stat);
 			kfree(p_new_node);
 			if (tx_stat & _XABORT_RETRY)
@@ -405,9 +417,11 @@ htm_path:
 		}
 	}
 
+	RCU_READER_UNLOCK();
 	return result;
 
 locking_path:
+	RCU_READER_LOCK();
 	RCU_WRITER_LOCK(p_list->rcuspin);
 
 	p_prev = (node_t *)RCU_DEREF(p_list->p_head);
@@ -435,6 +449,7 @@ locking_path:
 		RCU_ASSIGN_PTR((p_prev->p_next), p_new_node);
 	}
 	RCU_WRITER_UNLOCK(p_list->rcuspin);
+	RCU_READER_UNLOCK();
 
 	return result;
 }
@@ -453,6 +468,8 @@ int rcx_list_htmlock_add(list_t *p_list, val_t val)
 	int tx_stat;
 
 retry:
+	RCU_READER_LOCK();
+
 	p_prev = (node_t *)RCU_DEREF(p_list->p_head);
 	p_next = (node_t *)RCU_DEREF(p_prev->p_next);
 
@@ -487,6 +504,7 @@ retry:
 			htmlock(p_next) = 1;
 			_xend();
 		} else {
+			RCU_READER_UNLOCK();
 			record_abort(tx_stat);
 			kfree(p_new_node);
 			goto retry;
@@ -497,25 +515,30 @@ retry:
 		 * updaters could already touched something.
 		 */
 		if (RCU_DEREF(p_prev->p_next) != p_next) {
+			RCU_READER_UNLOCK();
 			record_abort(ABORT_CONFLICT);
 			goto unlock_retry;
 		}
 		if (p_prev->removed || p_next->removed) {
+			RCU_READER_UNLOCK();
 			record_abort(ABORT_DOUBLE_FREE);
 			goto unlock_retry;
 		}
 		RCU_ASSIGN_PTR((p_prev->p_next), p_new_node);
 		htmlock(p_next) = 0;
 		htmlock(p_prev) = 0;
+		RCU_READER_UNLOCK();
 		return result;
 
 unlock_retry:
 		htmlock(p_next) = 0;
 		htmlock(p_prev) = 0;
+		RCU_READER_UNLOCK();
 		kfree(p_new_node);
 		goto retry;
 	}
 
+	RCU_READER_UNLOCK();
 	return result;
 }
 
@@ -534,6 +557,7 @@ int rcx_list_hhtmlock_add(list_t *p_list, val_t val)
 	int tx_stat;
 
 retry:
+	RCU_READER_LOCK();
 	p_prev = (node_t *)RCU_DEREF(p_list->p_head);
 	p_next = (node_t *)RCU_DEREF(p_prev->p_next);
 
@@ -570,6 +594,7 @@ retry:
 			pnodelock(p_next) = 1;
 			_xend();
 		} else {
+			RCU_READER_UNLOCK();
 			record_abort(tx_stat);
 			kfree(p_new_node);
 			goto retry;
@@ -588,6 +613,7 @@ retry_global_lock:
 			htmlock(p_next) = 1;
 			_xend();
 		} else {
+			RCU_READER_UNLOCK();
 			record_abort(tx_stat);
 			goto retry_global_lock;
 		}
@@ -597,10 +623,12 @@ retry_global_lock:
 		 * updaters could already touched something.
 		 */
 		if (RCU_DEREF(p_prev->p_next) != p_next) {
+			RCU_READER_UNLOCK();
 			record_abort(ABORT_CONFLICT);
 			goto unlock_retry;
 		}
 		if (p_prev->removed || p_next->removed) {
+			RCU_READER_UNLOCK();
 			record_abort(ABORT_DOUBLE_FREE);
 			goto unlock_retry;
 		}
@@ -609,6 +637,7 @@ retry_global_lock:
 		htmlock(p_next) = 0;
 		pnodelock(p_prev) = 0;
 		pnodelock(p_next) = 0;
+		RCU_READER_UNLOCK();
 		return result;
 
 unlock_retry:
@@ -617,9 +646,11 @@ unlock_retry:
 		pnodelock(p_next) = 0;
 		pnodelock(p_prev) = 0;
 		kfree(p_new_node);
+		RCU_READER_UNLOCK();
 		goto retry;
 	}
 
+	RCU_READER_UNLOCK();
 	return result;
 }
 
@@ -638,6 +669,8 @@ int rcx_list_numa_add(list_t *p_list, val_t val)
 	int tx_stat;
 
 retry:
+	RCU_READER_LOCK();
+
 	p_prev = (node_t *)RCU_DEREF(p_list->p_head);
 	p_next = (node_t *)RCU_DEREF(p_prev->p_next);
 
@@ -674,6 +707,7 @@ retry:
 			pnodelock(p_next) = 1;
 			_xend();
 		} else {
+			RCU_READER_UNLOCK();
 			record_abort(tx_stat);
 			kfree(p_new_node);
 			goto retry;
@@ -686,10 +720,12 @@ retry:
 		 * previous updaters could already touched something.
 		 */
 		if (RCU_DEREF(p_prev->p_next) != p_next) {
+			RCU_READER_UNLOCK();
 			record_abort(ABORT_CONFLICT);
 			goto unlock_retry;
 		}
 		if (p_prev->removed || p_next->removed) {
+			RCU_READER_UNLOCK();
 			record_abort(ABORT_DOUBLE_FREE);
 			goto unlock_retry;
 		}
@@ -698,6 +734,7 @@ retry:
 		RCU_WRITER_UNLOCK(p_prev->global_lock);
 		pnodelock(p_prev) = 0;
 		pnodelock(p_next) = 0;
+		RCU_READER_UNLOCK();
 		return result;
 
 unlock_retry:
@@ -705,6 +742,7 @@ unlock_retry:
 		RCU_WRITER_UNLOCK(p_prev->global_lock);
 		pnodelock(p_next) = 0;
 		pnodelock(p_prev) = 0;
+		RCU_READER_UNLOCK();
 		kfree(p_new_node);
 		goto retry;
 	}
@@ -724,6 +762,8 @@ int rcx_list_remove(list_t *p_list, val_t val)
 	node_t *p_node;
 	node_t *n;
 	int tx_stat;
+
+	RCU_READER_LOCK();
 
 	p_prev = (node_t *)RCU_DEREF(p_list->p_head);
 	p_next = (node_t *)RCU_DEREF(p_prev->p_next);
@@ -752,10 +792,12 @@ int rcx_list_remove(list_t *p_list, val_t val)
 			p_next->removed = 1;
 			_xend();
 		} else {
+			RCU_READER_UNLOCK();
 			record_abort(tx_stat);
 			return 2;
 		}
 
+		RCU_READER_UNLOCK();
 		rcx_free_node(p_next);
 
 		return result;
@@ -779,6 +821,7 @@ int rcx_list_lf_remove(list_t *p_list, val_t val)
 	int retries = 0;
 
 retry:
+	RCU_READER_LOCK();
 
 	if (retries++ >= LF_RETRY_LIMIT) {
 		retries = 0;
@@ -802,12 +845,14 @@ retry:
 			RCU_ASSIGN_PTR((p_prev->p_next), n);
 			n->removed = 1;
 			RCU_WRITER_UNLOCK(p_list->rcuspin);
+			RCU_READER_UNLOCK();
 			rcx_free_node(p_next);
 
 			return 1;
 		}
 
 		RCU_WRITER_UNLOCK(p_list->rcuspin);
+		RCU_READER_UNLOCK();
 		return 0;
 	}
 
@@ -842,15 +887,18 @@ retry:
 			p_next->removed = 1;
 			_xend();
 		} else {
+			RCU_READER_UNLOCK();
 			record_abort(tx_stat);
 			goto retry;
 		}
 
+		RCU_READER_UNLOCK();
 		rcx_free_node(p_next);
 
 		return result;
 	}
 
+	RCU_READER_UNLOCK();
 	return result;
 }
 
@@ -869,6 +917,8 @@ int rcx_list_fb1_remove(list_t *p_list, val_t val)
 	int tx_stat;
 
 htm_path:
+	RCU_READER_LOCK();
+
 	p_prev = (node_t *)RCU_DEREF(p_list->p_head);
 	p_next = (node_t *)RCU_DEREF(p_prev->p_next);
 	while (1) {
@@ -900,6 +950,7 @@ htm_path:
 			p_next->removed = 1;
 			_xend();
 		} else {
+			RCU_READER_UNLOCK();
 			record_abort(tx_stat);
 			if (tx_stat & _XABORT_RETRY)
 				goto htm_path;
@@ -909,9 +960,11 @@ htm_path:
 
 		rcx_free_node(p_next);
 
+		RCU_READER_UNLOCK();
 		return result;
 	}
 
+	RCU_READER_UNLOCK();
 	return result;
 
 locking_path:
@@ -935,12 +988,14 @@ locking_path:
 		RCU_ASSIGN_PTR((p_prev->p_next), n);
 		n->removed = 1;
 		RCU_WRITER_UNLOCK(p_list->rcuspin);
+		RCU_READER_UNLOCK();
 		rcx_free_node(p_next);
 
 		return 1;
 	}
 
 	RCU_WRITER_UNLOCK(p_list->rcuspin);
+	RCU_READER_UNLOCK();
 	return 0;
 }
 
@@ -958,6 +1013,8 @@ int rcx_list_htmlock_remove(list_t *p_list, val_t val)
 	int tx_stat;
 
 retry:
+	RCU_READER_LOCK();
+
 	p_prev = (node_t *)RCU_DEREF(p_list->p_head);
 	p_next = (node_t *)RCU_DEREF(p_prev->p_next);
 	while (1) {
@@ -991,6 +1048,7 @@ retry:
 			htmlock(n) = 1;
 			_xend();
 		} else {
+			RCU_READER_UNLOCK();
 			record_abort(tx_stat);
 			goto retry;
 		}
@@ -998,11 +1056,13 @@ retry:
 		/* Complete CS. */
 		if (p_prev->removed || p_next->removed || n->removed) {
 			record_abort(ABORT_DOUBLE_FREE);
+			RCU_READER_UNLOCK();
 			goto unlock_retry;
 		}
 		if (RCU_DEREF(p_prev->p_next) != p_next ||
 				RCU_DEREF(p_next->p_next) != n) {
 			record_abort(ABORT_CONFLICT);
+			RCU_READER_UNLOCK();
 			goto unlock_retry;
 		}
 
@@ -1013,15 +1073,18 @@ retry:
 		htmlock(n) = 0;
 		htmlock(p_next) = 0;
 		htmlock(p_prev) = 0;
+		RCU_READER_UNLOCK();
 		return result;
 
 unlock_retry:
 		htmlock(n) = 0;
 		htmlock(p_next) = 0;
 		htmlock(p_prev) = 0;
+		RCU_READER_UNLOCK();
 		goto retry;
 	}
 
+	RCU_READER_UNLOCK();
 	return result;
 }
 
@@ -1039,6 +1102,8 @@ int rcx_list_hhtmlock_remove(list_t *p_list, val_t val)
 	int tx_stat;
 
 retry:
+	RCU_READER_LOCK();
+
 	p_prev = (node_t *)RCU_DEREF(p_list->p_head);
 	p_next = (node_t *)RCU_DEREF(p_prev->p_next);
 	while (1) {
@@ -1072,6 +1137,7 @@ retry:
 			pnodelock(n) = 1;
 			_xend();
 		} else {
+			RCU_READER_UNLOCK();
 			record_abort(tx_stat);
 			goto retry;
 		}
@@ -1091,17 +1157,20 @@ retry_global_lock:
 			htmlock(n) = 1;
 			_xend();
 		} else {
+			RCU_READER_UNLOCK();
 			record_abort(tx_stat);
 			goto retry_global_lock;
 		}
 
 		/* Complete CS. */
 		if (p_prev->removed || p_next->removed || n->removed) {
+			RCU_READER_UNLOCK();
 			record_abort(ABORT_DOUBLE_FREE);
 			goto unlock_retry;
 		}
 		if (RCU_DEREF(p_prev->p_next) != p_next ||
 				RCU_DEREF(p_next->p_next) != n) {
+			RCU_READER_UNLOCK();
 			record_abort(ABORT_CONFLICT);
 			goto unlock_retry;
 		}
@@ -1117,6 +1186,7 @@ retry_global_lock:
 		pnodelock(p_next) = 0;
 		pnodelock(p_prev) = 0;
 
+		RCU_READER_UNLOCK();
 		return result;
 
 
@@ -1128,9 +1198,11 @@ unlock_retry:
 		pnodelock(n) = 0;
 		pnodelock(p_next) = 0;
 		pnodelock(p_prev) = 0;
+		RCU_READER_UNLOCK();
 		goto retry;
 	}
 
+	RCU_READER_UNLOCK();
 	return result;
 }
 
@@ -1148,6 +1220,8 @@ int rcx_list_numa_remove(list_t *p_list, val_t val)
 	int tx_stat;
 
 retry:
+	RCU_READER_LOCK();
+
 	p_prev = (node_t *)RCU_DEREF(p_list->p_head);
 	p_next = (node_t *)RCU_DEREF(p_prev->p_next);
 	while (1) {
@@ -1191,6 +1265,7 @@ retry:
 			*/
 			_xend();
 		} else {
+			RCU_READER_UNLOCK();
 			record_abort(tx_stat);
 			goto retry;
 		}
@@ -1201,11 +1276,13 @@ retry:
 
 		/* Spinlock CS. */
 		if (p_prev->removed || p_next->removed || n->removed) {
+			RCU_READER_UNLOCK();
 			record_abort(ABORT_DOUBLE_FREE);
 			goto unlock_retry;
 		}
 		if (RCU_DEREF(p_prev->p_next) != p_next ||
 				RCU_DEREF(p_next->p_next) != n) {
+			RCU_READER_UNLOCK();
 			record_abort(ABORT_CONFLICT);
 			goto unlock_retry;
 		}
@@ -1221,6 +1298,7 @@ retry:
 		pnodelock(p_next) = 0;
 		pnodelock(p_prev) = 0;
 
+		RCU_READER_UNLOCK();
 		return result;
 
 
@@ -1232,9 +1310,11 @@ unlock_retry:
 		pnodelock(n) = 0;
 		pnodelock(p_next) = 0;
 		pnodelock(p_prev) = 0;
+		RCU_READER_UNLOCK();
 		goto retry;
 	}
 
+	RCU_READER_UNLOCK();
 	return result;
 }
 
